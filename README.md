@@ -1,12 +1,5 @@
 # Predicting Forest Carbon Stocks from Climate & CO2 Emissions Data
 
-This project investigates whether national-level climate data and CO2
-emissions can predict forest carbon stocks (above- and below-ground biomass)
-across countries. It integrates three public datasets into a single
-distributed pipeline (Spark/HDFS, deployed on GCP), then benchmarks Linear
-Regression, Random Forest, and Gradient Boosted Trees for the prediction
-task.
-
 Forests absorb carbon and play a significant role in
 combating climate change, but quantifying and predicting carbon sequestration
 across countries and time is difficult given how fragmented and
