@@ -1,16 +1,27 @@
 # Predicting Forest Carbon Stocks from Climate & CO2 Emissions Data
 
-## Overview
+This project investigates whether national-level climate data and CO2
+emissions can predict forest carbon stocks (above- and below-ground biomass)
+across countries. It integrates three public datasets into a single
+distributed pipeline (Spark/HDFS, deployed on GCP), then benchmarks Linear
+Regression, Random Forest, and Gradient Boosted Trees for the prediction
+task.
 
-This project investigates whether national-level climate data and CO2 emissions
-can predict forest carbon stocks (above- and below-ground biomass) across
-countries. It combines three public datasets into a single pipeline built with
-PySpark, then benchmarks Linear Regression, Random Forest, and Gradient
-Boosted Trees for the prediction task.
+Forests absorb carbon and play a significant role in
+combating climate change, but quantifying and predicting carbon sequestration
+across countries and time is difficult given how fragmented and
+multi-sourced the underlying data is. This project builds a predictive
+analytics pipeline that estimates forest carbon stocks using climate
+indicators and per-capita CO2 emissions data, implemented on cloud
+infrastructure to support distributed data processing and model training.
 
-**Short answer: not very well** — and the reasons why turned out to be more
-interesting than the models themselves. See [Results](#results) and
-[Why the Models Underperformed](#why-the-models-underperformed) below.
+Predicting forest carbon sequestration matters for informing green policy,
+sustainability planning, and tracking climate targets. The goal here was to
+integrate three independent datasets — NOAA GSOY (global annual temperature
+and precipitation records), FAO FRA (forest area, biomass, and carbon stock
+data), and Our World in Data (national CO2 emissions and per-capita
+indicators) — preprocess and join them at scale, then train and evaluate
+multiple predictive models using Spark MLlib.
 
 ## Data Sources
 
@@ -20,7 +31,44 @@ interesting than the models themselves. See [Results](#results) and
 | NOAA GSOY | [NOAA NCEI](https://www.ncei.noaa.gov/metadata/geoportal/rest/metadata/item/gov.noaa.ncdc:C00947/html) | Station-level annual climate summaries (temperature, precipitation, wind, degree-days) |
 | Our World in Data | [ourworldindata.org](https://ourworldindata.org/co2-and-greenhouse-gas-emissions) | CO2 emissions per capita, by country and year |
 
-## Pipeline
+None of these datasets are included in this repo due to size — download each
+from the links above and place in `nbs/` (FAO Excel file and OWID CSV) or
+`nbs/data/` (NOAA station files) before running the notebook.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A[Initialize GCP, Docker, HDFS] --> B[Import Datasets<br/>NOAA, FRA, OWID]
+    B --> C[Data Preprocessing]
+    C --> D[EDA]
+    D --> E[Data Join]
+    E --> F[Data Train]
+    F --> G[Visualization]
+```
+
+The project's cloud infrastructure was built on Google Cloud Platform (GCP),
+using Dataproc for the managed Spark cluster, Cloud Storage (GCS) for
+dataset staging, and Compute Engine for on-demand training instances. Docker
+was used to package a local development/testing environment (Hadoop HDFS,
+Spark master/workers, and a Jupyter notebook) that mirrors the cluster
+architecture, so the pipeline runs identically locally and in the cloud —
+this repo's `docker-compose.yml` is that local environment.
+
+HDFS served as the distributed backend storage layer for Spark's
+computations. While the final joined dataset here (~190 countries × 5 years)
+is modest in size, the pipeline was built on this distributed architecture
+deliberately, to demonstrate a workflow that scales to much larger
+multi-source, temporal datasets — e.g. station-level rather than
+country-aggregated climate records — without requiring redesign.
+
+Apache Spark MLlib was used for all modeling. Four algorithms were tested:
+Linear Regression and Random Forest Regression for predicting forest carbon
+stock directly, Gradient Boosted Trees to test for non-linear performance
+gains, and K-Means Clustering (with PCA for visualization) to explore
+climate-carbon relationship patterns across countries.
+
+**Pipeline stages:**
 
 1. **FAO FRA preprocessing** — parsed multi-header Excel sheets, dropped
    redundant columns, reshaped into a clean country × year carbon table for
@@ -34,12 +82,29 @@ interesting than the models themselves. See [Results](#results) and
 3. **OWID CO2 preprocessing** — filtered out aggregate/region rows (e.g.
    "World", "Europe", income-group labels), pivoted to one column per target
    year.
-4. **Join** — merged all three sources on `country` and `year`, summed AGB +
-   BGB into a single `carbon_total` target.
-5. **Modeling** — feature set: average temperature, average precipitation,
-   average wind, and CO2 emissions per capita. 70/30 train-test split.
+4. **EDA** — exploratory analysis on each cleaned dataset individually
+   (distributions, trends over time, correlations) before joining.
+5. **Data Join** — merged all three sources on `country` and `year`, summed
+   AGB + BGB into a single `carbon_total` target.
+6. **Data Train** — feature set of average temperature, average
+   precipitation, average wind, and CO2 emissions per capita; 70/30
+   train-test split; Linear Regression, Random Forest, Gradient Boosted
+   Trees, and K-Means/PCA trained via Spark MLlib.
+7. **Visualization** — model performance (predicted vs. actual, feature
+   importance, cluster projections) visualized in the notebook.
 
 All intermediate and final tables are cached to HDFS as Parquet.
+
+### Cloud Resources
+
+| Setting | Configuration |
+|---|---|
+| Instances | 1 |
+| Usage Time | 20 hours |
+| VM | n1-standard-4 (4 vCPUs, 16 GB RAM) |
+| Persistent Disk | 50 GB |
+| Region | Sydney (australia-southeast1) |
+| Monthly Cost | $8.49 |
 
 ## Results
 
@@ -56,10 +121,10 @@ used to explore structure in the feature space; clusters loosely separated
 countries by climate/emissions profile but didn't map cleanly onto carbon
 stock levels.
 
-## Why the Models Underperformed
+## Limitations & Why the Models Underperformed
 
-An R² of 0.24 means the models explain less than a quarter of the variance in
-forest carbon stocks. A few likely reasons:
+An R² of 0.24 means the best model explains less than a quarter of the
+variance in forest carbon stocks. A few likely reasons:
 
 - **Feature-target mismatch.** National climate averages and per-capita CO2
   emissions are economic/atmospheric signals, not direct drivers of forest
@@ -76,7 +141,7 @@ forest carbon stocks. A few likely reasons:
 - **Small, noisy sample.** ~190 countries × 5 years, with real heterogeneity
   in forest types (boreal, tropical, temperate) lumped into one global model.
 
-## Next Steps
+## Future Work / Next Steps
 
 - Incorporate satellite-derived vegetation indices (e.g. NDVI) or
   higher-resolution land-cover data instead of country-level averages.
@@ -84,10 +149,13 @@ forest carbon stocks. A few likely reasons:
   to biomass carbon than climate or emissions.
 - Model forest biome types separately rather than pooling all countries into
   one global regression.
+- Move from country-year rows to grid-cell rows (e.g. via Hansen Global
+  Forest Change or NASA GEDI), which should more directly test whether
+  resolution — not model choice — was the primary limitation here.
 
 ## Tech Stack
 
-PySpark, HDFS, pandas, scikit-learn-style Spark ML pipelines
-(`VectorAssembler`, `StandardScaler`, `LinearRegression`,
-`RandomForestRegressor`, `GBTRegressor`, `KMeans`, `PCA`), seaborn/matplotlib
-for EDA and visualization.
+GCP (Dataproc, GCS, Compute Engine), Docker, Hadoop HDFS, PySpark, Spark
+MLlib (`VectorAssembler`, `StandardScaler`, `LinearRegression`,
+`RandomForestRegressor`, `GBTRegressor`, `KMeans`, `PCA`), pandas,
+seaborn/matplotlib for EDA and visualization.
